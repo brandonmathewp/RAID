@@ -98,8 +98,31 @@ def _ema_last(values, period):
     return series[-1] if series else None
 
 
+def _is_pullback_entry(closes, price, ema20, direction):
+    """True if price has retraced toward EMA20 rather than extended away from it.
+
+    A trend entry should happen on a pullback (sell the rally / buy the dip), not
+    at a fresh extreme — entering extensions is what got stopped on reversion.
+    """
+    if not ema20:
+        return False
+    # Must be near the fast EMA (pulled back), not extended away from it.
+    if abs(price - ema20) / ema20 > config.PULLBACK_BAND_PCT:
+        return False
+    window = closes[-config.PULLBACK_LOOKBACK:]
+    if len(window) < 2:
+        return True
+    if direction == "short":
+        # Not making fresh lows — price has bounced off the recent low.
+        return price > min(window) * (1 + config.PULLBACK_MIN_BOUNCE)
+    if direction == "long":
+        # Not making fresh highs — price has pulled back from the recent high.
+        return price < max(window) * (1 - config.PULLBACK_MIN_BOUNCE)
+    return True
+
+
 def detect_direction(ohlcv):
-    """Return 'long'/'short' from EMA-stack trend, MACD state, then crossover; None if unclear."""
+    """Return 'long'/'short' for a trend, gated to pullback entries only; None otherwise."""
     try:
         closes = [c[4] for c in ohlcv]
         if len(closes) < config.RSI_PERIOD + 1:
@@ -112,27 +135,31 @@ def detect_direction(ohlcv):
         macd_bull = bool(macd_line and signal_line and macd_line[-1] > signal_line[-1])
         macd_bear = bool(macd_line and signal_line and macd_line[-1] < signal_line[-1])
 
-        # Primary: full EMA-stack trend alignment — the trend-following core.
+        # Determine the trend direction (primary EMA stack, then EMA+MACD, then cross).
+        direction = None
         if ema20 and ema50 and ema200:
             if price > ema20 > ema50 > ema200:
-                return "long"
-            if price < ema20 < ema50 < ema200:
-                return "short"
-
-        # Secondary: short/medium EMA alignment confirmed by MACD state.
-        if ema20 and ema50:
+                direction = "long"
+            elif price < ema20 < ema50 < ema200:
+                direction = "short"
+        if direction is None and ema20 and ema50:
             if price < ema20 < ema50 and macd_bear:
-                return "short"
-            if price > ema20 > ema50 and macd_bull:
-                return "long"
+                direction = "short"
+            elif price > ema20 > ema50 and macd_bull:
+                direction = "long"
+        if direction is None:
+            cross = _macd_cross(closes)
+            if cross == "bullish":
+                direction = "long"
+            elif cross == "bearish":
+                direction = "short"
+        if direction is None:
+            return None
 
-        # Fallback: a fresh MACD crossover.
-        cross = _macd_cross(closes)
-        if cross == "bullish":
-            return "long"
-        if cross == "bearish":
-            return "short"
-        return None
+        # Pullback gate: only enter after a retrace toward EMA20, not at an extension.
+        if not _is_pullback_entry(closes, price, ema20, direction):
+            return None
+        return direction
     except Exception as exc:  # noqa: BLE001
         log.error("detect_direction failed: %s", exc)
         return None
@@ -172,10 +199,18 @@ def score_technical(ohlcv, direction):
             if (bullish and diff >= 0) or (not bullish and diff <= 0):
                 score += config.TS_MACD_WEIGHT
 
-        # RSI on the correct side of 50 for the trend.
+        # RSI: reward healthy momentum, penalize exhaustion (over-extended entries).
         rsi = _rsi(closes, config.RSI_PERIOD)
-        if (bullish and rsi > 50) or (not bullish and rsi < 50):
-            score += config.TS_RSI_WEIGHT
+        if bullish:
+            if config.RSI_LONG_BAND_LOW <= rsi <= config.RSI_LONG_BAND_HIGH:
+                score += config.TS_RSI_WEIGHT
+            elif rsi > config.RSI_OVERBOUGHT:
+                score -= config.TS_RSI_PENALTY
+        else:
+            if config.RSI_SHORT_BAND_LOW <= rsi <= config.RSI_SHORT_BAND_HIGH:
+                score += config.TS_RSI_WEIGHT
+            elif rsi < config.RSI_OVERSOLD:
+                score -= config.TS_RSI_PENALTY
 
         # Volume confirmation.
         if len(volumes) > 1:
@@ -183,7 +218,7 @@ def score_technical(ohlcv, direction):
             if avg_vol > 0 and volumes[-1] > config.VOLUME_CONFIRM_MULT * avg_vol:
                 score += config.TS_VOLUME_WEIGHT
 
-        return min(score, 100.0)
+        return max(0.0, min(score, 100.0))
     except Exception as exc:  # noqa: BLE001
         log.error("score_technical failed: %s", exc)
         return 0.0

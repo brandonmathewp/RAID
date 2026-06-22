@@ -110,6 +110,16 @@ TS_MACD_WEIGHT = 25.0
 TS_EMA_STRONG = 50.0
 TS_EMA_MIXED = 15.0
 TS_VOLUME_WEIGHT = 10.0
+TS_RSI_PENALTY = 15.0           # subtracted when RSI shows exhaustion against the entry
+# RSI "healthy momentum" bands that earn credit (direction-relative; avoid exhaustion).
+RSI_SHORT_BAND_LOW = 40.0
+RSI_SHORT_BAND_HIGH = 55.0
+RSI_LONG_BAND_LOW = 45.0
+RSI_LONG_BAND_HIGH = 60.0
+# Pullback entry gate: enter after a retrace toward EMA20, not at an extension.
+PULLBACK_BAND_PCT = 0.01        # price must be within 1% of EMA20
+PULLBACK_LOOKBACK = 12          # candles (~1h on 5m) used to detect a fresh extreme
+PULLBACK_MIN_BOUNCE = 0.005     # price must have retraced >=0.5% off that extreme
 
 # --- Kalshi scoring (signals) ---------------------------------------------
 KALSHI_YES_LOW = 0.30
