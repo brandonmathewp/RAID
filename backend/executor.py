@@ -313,9 +313,9 @@ async def _claude_override(trade: dict, price: float, db):
 async def close_eod_positions(db):
     """Close open stocks/options positions at the EOD bell (Phase 1: logic only)."""
     try:
-        import pytz
+        from zoneinfo import ZoneInfo
 
-        tz = pytz.timezone(config.EOD_CLOSE_TZ)
+        tz = ZoneInfo(config.EOD_CLOSE_TZ)
         now_local = datetime.now(tz)
         if now_local.hour != config.EOD_CLOSE_HOUR:
             return

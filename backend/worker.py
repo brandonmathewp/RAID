@@ -1,12 +1,11 @@
 """RAID worker — the Railway entrypoint: startup checks, health server, and the main loop."""
 
 import asyncio
+import json
 import logging
 import signal as signal_module
 import time
 from datetime import datetime, timedelta, timezone
-
-from aiohttp import web
 
 import config
 import db
@@ -177,34 +176,56 @@ async def midnight_reset(database):
         log.error("midnight_reset failed: %s", exc)
 
 
-async def health_handler(request):
-    """Return the bot's live status as JSON for health checks."""
-    return web.json_response(
-        {
-            "status": "online",
-            "bot": config.BOT_NAME,
-            "mode": "paper" if config.PAPER_MODE else "live",
-            "equity": STATE["equity"],
-            "daily_pnl": STATE["daily_pnl"],
-            "open_trades": STATE["open_trades"],
-            "kill_switch": STATE["kill_switch"],
-            "last_cycle": STATE["last_cycle"],
-            "uptime_seconds": int(time.time() - STATE["start_time"]),
-            "paper_mode": config.PAPER_MODE,
-        }
-    )
+def _health_payload():
+    """Return the bot's live status as a JSON-serializable dict."""
+    return {
+        "status": "online",
+        "bot": config.BOT_NAME,
+        "mode": "paper" if config.PAPER_MODE else "live",
+        "equity": STATE["equity"],
+        "daily_pnl": STATE["daily_pnl"],
+        "open_trades": STATE["open_trades"],
+        "kill_switch": STATE["kill_switch"],
+        "last_cycle": STATE["last_cycle"],
+        "uptime_seconds": int(time.time() - STATE["start_time"]),
+        "paper_mode": config.PAPER_MODE,
+    }
+
+
+async def _handle_health_conn(reader, writer):
+    """Serve a single HTTP request with the health JSON payload, then close."""
+    try:
+        # Drain the request line + headers (we serve the same payload on any path).
+        try:
+            await asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), timeout=5)
+        except (asyncio.IncompleteReadError, asyncio.TimeoutError, asyncio.LimitOverrunError):
+            pass
+        body = json.dumps(_health_payload()).encode("utf-8")
+        response = (
+            b"HTTP/1.1 200 OK\r\n"
+            b"Content-Type: application/json\r\n"
+            b"Content-Length: " + str(len(body)).encode("ascii") + b"\r\n"
+            b"Connection: close\r\n\r\n" + body
+        )
+        writer.write(response)
+        await writer.drain()
+    except Exception as exc:  # noqa: BLE001
+        log.error("health request failed: %s", exc)
+    finally:
+        try:
+            writer.close()
+            await writer.wait_closed()
+        except Exception:  # noqa: BLE001
+            pass
 
 
 async def start_health_server():
-    """Start the aiohttp health server on HEALTH_CHECK_PORT and return its runner."""
-    app = web.Application()
-    app.router.add_get("/", health_handler)
-    runner = web.AppRunner(app)
-    await runner.setup()
-    site = web.TCPSite(runner, "0.0.0.0", config.HEALTH_CHECK_PORT)
-    await site.start()
+    """Start the stdlib asyncio health server on HEALTH_CHECK_PORT and return it."""
+    server = await asyncio.start_server(
+        _handle_health_conn, "0.0.0.0", config.HEALTH_CHECK_PORT
+    )
     log.info("Health server listening on :%d", config.HEALTH_CHECK_PORT)
-    return runner
+    return server
 
 
 async def main():
@@ -226,7 +247,7 @@ async def main():
         equity,
     )
 
-    runner = await start_health_server()
+    server = await start_health_server()
     brain.reset_daily_spend()
 
     last_crypto_scan = 0.0
@@ -279,7 +300,11 @@ async def main():
 
             await asyncio.sleep(config.LOOP_SLEEP_SECONDS)
     finally:
-        await runner.cleanup()
+        server.close()
+        try:
+            await server.wait_closed()
+        except Exception:  # noqa: BLE001
+            pass
         log.info("RAID OFFLINE — %s", datetime.now(timezone.utc).isoformat())
 
 
