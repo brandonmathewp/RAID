@@ -75,9 +75,11 @@ BUDGET_TECH_THRESHOLD = 75.0             # technical-only ENTER bar when budget 
 
 # --- Scanner tuning -------------------------------------------------------
 KRAKEN_OHLC_INTERVAL = 5      # minutes per candle
-KRAKEN_MAX_PAIRS = 25         # cap pairs scanned per cycle
+KRAKEN_MAX_PAIRS = 25         # cap pairs scanned per cycle (top N by volume)
 OHLCV_CANDLES = 300           # candles per pair (must exceed EMA_SLOW so EMA200 computes)
 KRAKEN_QUOTES = ("ZUSD", "USD")
+MIN_24H_USD_VOLUME = 1_000_000  # skip illiquid pairs whose price never moves to SL/TP
+KRAKEN_TICKER_CHUNK = 200       # pairs per Ticker call when measuring volume
 KALSHI_CLOSE_WITHIN_HOURS = 24
 NEWS_LOOKBACK_HOURS = 2
 NEWS_TOP_N = 3

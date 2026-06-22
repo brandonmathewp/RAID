@@ -71,28 +71,51 @@ async def scan_kraken():
             pairs_res = await client.get(f"{KRAKEN_BASE}/AssetPairs")
             pairs_data = pairs_res.json().get("result", {})
 
-            selected = []
+            # All USD-quote pairs: altname -> canonical Ticker key.
+            candidates = {}
             for pair_key, info in pairs_data.items():
-                if info.get("quote") in config.KRAKEN_QUOTES and "altname" in info:
-                    selected.append((pair_key, info["altname"]))
-                if len(selected) >= config.KRAKEN_MAX_PAIRS:
-                    break
+                if info.get("quote") in config.KRAKEN_QUOTES and info.get("altname"):
+                    candidates[info["altname"]] = pair_key
+            if not candidates:
+                return results
+            canon_to_alt = {canon: alt for alt, canon in candidates.items()}
 
-            if not selected:
+            # Fetch Ticker for every candidate (chunked) and compute 24h USD volume.
+            # Kraken Ticker: v[1] = 24h base volume, p[1] = 24h VWAP -> base*vwap = USD.
+            prices = {}    # altname -> last price
+            volumes = {}   # altname -> 24h USD volume
+            altnames = list(candidates)
+            for i in range(0, len(altnames), config.KRAKEN_TICKER_CHUNK):
+                chunk = altnames[i : i + config.KRAKEN_TICKER_CHUNK]
+                try:
+                    tick_res = await client.get(
+                        f"{KRAKEN_BASE}/Ticker", params={"pair": ",".join(chunk)}
+                    )
+                    tick_data = tick_res.json().get("result", {})
+                    for canon, t in tick_data.items():
+                        alt = canon_to_alt.get(canon, canon)
+                        try:
+                            prices[alt] = float(t["c"][0])
+                            volumes[alt] = float(t["v"][1]) * float(t["p"][1])
+                        except (KeyError, IndexError, TypeError, ValueError):
+                            continue
+                except Exception as exc:  # noqa: BLE001
+                    log.error("Kraken Ticker chunk failed: %s", exc)
+                    continue
+
+            # Keep only pairs above the USD-volume floor, highest first, then cap.
+            liquid = sorted(
+                (a for a in candidates if volumes.get(a, 0.0) >= config.MIN_24H_USD_VOLUME),
+                key=lambda a: volumes.get(a, 0.0),
+                reverse=True,
+            )[: config.KRAKEN_MAX_PAIRS]
+            if not liquid:
+                log.warning(
+                    "No Kraken pairs above $%.0f 24h volume", config.MIN_24H_USD_VOLUME
+                )
                 return results
 
-            # One Ticker call for all selected pairs.
-            altnames = ",".join(alt for _, alt in selected)
-            prices = {}
-            try:
-                tick_res = await client.get(f"{KRAKEN_BASE}/Ticker", params={"pair": altnames})
-                tick_data = tick_res.json().get("result", {})
-                for key, t in tick_data.items():
-                    prices[key] = float(t["c"][0])
-            except Exception as exc:  # noqa: BLE001
-                log.error("Kraken Ticker failed: %s", exc)
-
-            for pair_key, altname in selected:
+            for altname in liquid:
                 try:
                     ohlc_res = await client.get(
                         f"{KRAKEN_BASE}/OHLC",
@@ -110,7 +133,7 @@ async def scan_kraken():
                         [c[0], float(c[1]), float(c[2]), float(c[3]), float(c[4]), float(c[6])]
                         for c in candles[-config.OHLCV_CANDLES:]
                     ]
-                    current = prices.get(pair_key)
+                    current = prices.get(altname)
                     if current is None and ohlcv:
                         current = ohlcv[-1][4]
                     results.append(
@@ -119,6 +142,7 @@ async def scan_kraken():
                             symbol=altname,
                             ohlcv=ohlcv,
                             current_price=current or 0.0,
+                            volume_24h=volumes.get(altname),
                             scan_time=_now_iso(),
                         )
                     )
