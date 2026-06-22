@@ -1,17 +1,25 @@
-"""RAID database layer — single Supabase client, async-wrapped CRUD + schema bootstrap."""
+"""RAID database layer — single async Supabase client + CRUD and schema verification."""
 
-import asyncio
 import logging
 from datetime import datetime, timezone
 
-from supabase import Client, create_client
+from supabase import acreate_client, AsyncClient
 
 import config
 
 log = logging.getLogger("raid.db")
 
-# Single Supabase client instance created once at module level.
-supabase: Client = create_client(config.SUPABASE_URL, config.SUPABASE_KEY)
+# Single async Supabase client, created once by init() during worker startup
+# (acreate_client is a coroutine and cannot run at import time).
+supabase: AsyncClient = None
+
+
+async def init():
+    """Create the async Supabase client; must be awaited once before any DB call."""
+    global supabase
+    if supabase is None:
+        supabase = await acreate_client(config.SUPABASE_URL, config.SUPABASE_KEY)
+    return supabase
 
 # Full schema. Run this once in the Supabase SQL Editor (it is also committed to
 # the repo as schema.sql). The anon key cannot issue DDL, so the bot does NOT
@@ -127,9 +135,7 @@ async def create_tables():
     missing = []
     for table in _EXPECTED_TABLES:
         try:
-            await asyncio.to_thread(
-                lambda t=table: supabase.table(t).select("*").limit(1).execute()
-            )
+            await supabase.table(table).select("*").limit(1).execute()
         except Exception:  # noqa: BLE001
             missing.append(table)
     if missing:
@@ -144,8 +150,8 @@ async def create_tables():
 async def get_equity():
     """Return the latest equity snapshot value, or STARTING_EQUITY if none exist."""
     try:
-        res = await asyncio.to_thread(
-            lambda: supabase.table("equity_snapshots")
+        res = await (
+            supabase.table("equity_snapshots")
             .select("equity")
             .order("timestamp", desc=True)
             .limit(1)
@@ -161,8 +167,8 @@ async def get_equity():
 async def update_equity(equity: float, daily_pnl: float):
     """Insert a new equity snapshot row."""
     try:
-        await asyncio.to_thread(
-            lambda: supabase.table("equity_snapshots")
+        await (
+            supabase.table("equity_snapshots")
             .insert(
                 {
                     "equity": equity,
@@ -179,9 +185,7 @@ async def update_equity(equity: float, daily_pnl: float):
 async def log_trade(trade: dict):
     """Insert a trade row and return its id (empty string on failure)."""
     try:
-        res = await asyncio.to_thread(
-            lambda: supabase.table("trades").insert(trade).execute()
-        )
+        res = await supabase.table("trades").insert(trade).execute()
         if res.data:
             return res.data[0]["id"]
     except Exception as exc:  # noqa: BLE001
@@ -192,8 +196,8 @@ async def log_trade(trade: dict):
 async def close_trade(trade_id: str, exit_price: float, pnl: float, reason: str):
     """Mark a trade closed with its exit price, realized pnl, close time, and reason."""
     try:
-        await asyncio.to_thread(
-            lambda: supabase.table("trades")
+        await (
+            supabase.table("trades")
             .update(
                 {
                     "status": "closed",
@@ -213,9 +217,7 @@ async def close_trade(trade_id: str, exit_price: float, pnl: float, reason: str)
 async def log_signal(signal: dict):
     """Insert a signal row and return its id (empty string on failure)."""
     try:
-        res = await asyncio.to_thread(
-            lambda: supabase.table("signals").insert(signal).execute()
-        )
+        res = await supabase.table("signals").insert(signal).execute()
         if res.data:
             return res.data[0]["id"]
     except Exception as exc:  # noqa: BLE001
@@ -226,9 +228,7 @@ async def log_signal(signal: dict):
 async def update_signal(signal_id: str, updates: dict):
     """Update an existing signal record by id."""
     try:
-        await asyncio.to_thread(
-            lambda: supabase.table("signals").update(updates).eq("id", signal_id).execute()
-        )
+        await supabase.table("signals").update(updates).eq("id", signal_id).execute()
     except Exception as exc:  # noqa: BLE001
         log.error("update_signal failed: %s", exc)
 
@@ -236,9 +236,7 @@ async def update_signal(signal_id: str, updates: dict):
 async def log_brain_decision(decision: dict):
     """Insert a brain_decisions row."""
     try:
-        await asyncio.to_thread(
-            lambda: supabase.table("brain_decisions").insert(decision).execute()
-        )
+        await supabase.table("brain_decisions").insert(decision).execute()
     except Exception as exc:  # noqa: BLE001
         log.error("log_brain_decision failed: %s", exc)
 
@@ -246,9 +244,7 @@ async def log_brain_decision(decision: dict):
 async def get_open_trades():
     """Return all trades whose status is 'open'."""
     try:
-        res = await asyncio.to_thread(
-            lambda: supabase.table("trades").select("*").eq("status", "open").execute()
-        )
+        res = await supabase.table("trades").select("*").eq("status", "open").execute()
         return res.data or []
     except Exception as exc:  # noqa: BLE001
         log.error("get_open_trades failed: %s", exc)
@@ -258,8 +254,8 @@ async def get_open_trades():
 async def get_open_trades_by_market(market: str):
     """Return open trades filtered by market."""
     try:
-        res = await asyncio.to_thread(
-            lambda: supabase.table("trades")
+        res = await (
+            supabase.table("trades")
             .select("*")
             .eq("status", "open")
             .eq("market", market)
@@ -274,8 +270,8 @@ async def get_open_trades_by_market(market: str):
 async def get_consecutive_losses():
     """Return the count of consecutive losing trades from the most recent close."""
     try:
-        res = await asyncio.to_thread(
-            lambda: supabase.table("trades")
+        res = await (
+            supabase.table("trades")
             .select("pnl")
             .eq("status", "closed")
             .order("close_time", desc=True)
@@ -297,8 +293,8 @@ async def get_consecutive_losses():
 async def get_daily_stats(date: str):
     """Return the daily_stats row for the given date as a dict, or {} if absent."""
     try:
-        res = await asyncio.to_thread(
-            lambda: supabase.table("daily_stats").select("*").eq("date", date).limit(1).execute()
+        res = await (
+            supabase.table("daily_stats").select("*").eq("date", date).limit(1).execute()
         )
         if res.data:
             return res.data[0]
@@ -310,9 +306,7 @@ async def get_daily_stats(date: str):
 async def upsert_daily_stats(stats: dict):
     """Insert or update the daily_stats row for its date (unique key)."""
     try:
-        await asyncio.to_thread(
-            lambda: supabase.table("daily_stats").upsert(stats, on_conflict="date").execute()
-        )
+        await supabase.table("daily_stats").upsert(stats, on_conflict="date").execute()
     except Exception as exc:  # noqa: BLE001
         log.error("upsert_daily_stats failed: %s", exc)
 
@@ -320,8 +314,8 @@ async def upsert_daily_stats(stats: dict):
 async def get_kill_switch():
     """Return the current kill switch active status (latest record wins)."""
     try:
-        res = await asyncio.to_thread(
-            lambda: supabase.table("kill_switch")
+        res = await (
+            supabase.table("kill_switch")
             .select("active")
             .order("activated_at", desc=True)
             .limit(1)
@@ -337,8 +331,8 @@ async def get_kill_switch():
 async def get_kill_switch_record():
     """Return the latest kill_switch record (dict) or {} if none exist."""
     try:
-        res = await asyncio.to_thread(
-            lambda: supabase.table("kill_switch")
+        res = await (
+            supabase.table("kill_switch")
             .select("*")
             .order("activated_at", desc=True)
             .limit(1)
@@ -354,8 +348,8 @@ async def get_kill_switch_record():
 async def set_kill_switch(active: bool, reason: str, activated_by: str):
     """Record a new kill switch state (the latest record is the current state)."""
     try:
-        await asyncio.to_thread(
-            lambda: supabase.table("kill_switch")
+        await (
+            supabase.table("kill_switch")
             .insert(
                 {
                     "active": active,
@@ -373,9 +367,7 @@ async def set_kill_switch(active: bool, reason: str, activated_by: str):
 async def log_learning_adjustment(adj: dict):
     """Insert a learning_adjustments row."""
     try:
-        await asyncio.to_thread(
-            lambda: supabase.table("learning_adjustments").insert(adj).execute()
-        )
+        await supabase.table("learning_adjustments").insert(adj).execute()
     except Exception as exc:  # noqa: BLE001
         log.error("log_learning_adjustment failed: %s", exc)
 
@@ -386,8 +378,8 @@ async def get_trades_for_learning(days: int):
         from datetime import timedelta
 
         cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
-        res = await asyncio.to_thread(
-            lambda: supabase.table("trades")
+        res = await (
+            supabase.table("trades")
             .select("*")
             .eq("status", "closed")
             .gte("close_time", cutoff)

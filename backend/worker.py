@@ -232,8 +232,9 @@ async def main():
     """Run RAID forever: scan, signal, gate, validate, execute, monitor."""
     config.validate_config()
 
-    # Verify DB connectivity (a trivial query that returns equity or the default).
+    # Create the async Supabase client and verify connectivity.
     try:
+        await db.init()
         equity = await db.get_equity()
     except Exception as exc:  # noqa: BLE001
         raise RuntimeError(f"Supabase connection failed: {exc}") from exc

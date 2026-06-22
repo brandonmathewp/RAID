@@ -110,11 +110,7 @@ async def update_trailing_stop(trade: dict, current_price: float, db):
 async def _persist_sl(db, trade_id: str, new_sl: float):
     """Persist a new stop-loss value on a trade record."""
     try:
-        import asyncio
-
-        await asyncio.to_thread(
-            lambda: db.supabase.table("trades").update({"sl": new_sl}).eq("id", trade_id).execute()
-        )
+        await db.supabase.table("trades").update({"sl": new_sl}).eq("id", trade_id).execute()
     except Exception as exc:  # noqa: BLE001
         log.error("_persist_sl failed: %s", exc)
 
