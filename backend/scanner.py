@@ -131,46 +131,49 @@ async def scan_kraken():
 
 
 async def scan_kalshi():
-    """Scan open Kalshi markets resolving within 24h; return a ScanResult per market."""
-    results = []
-    try:
-        headers = {}
-        if config.KALSHI_API_KEY:
-            headers["Authorization"] = f"Bearer {config.KALSHI_API_KEY}"
-        async with httpx.AsyncClient(timeout=config.HTTP_TIMEOUT, headers=headers) as client:
-            res = await client.get(f"{KALSHI_BASE}/markets", params={"status": "open", "limit": 200})
-            markets = res.json().get("markets", [])
-            now = datetime.now(timezone.utc)
-            horizon = now + timedelta(hours=config.KALSHI_CLOSE_WITHIN_HOURS)
-            for m in markets:
-                try:
-                    close_raw = m.get("close_time")
-                    if not close_raw:
-                        continue
-                    close_dt = datetime.fromisoformat(close_raw.replace("Z", "+00:00"))
-                    if not (now <= close_dt <= horizon):
-                        continue
-                    yes_price = (m.get("yes_ask") or 0) / 100.0
-                    no_price = (m.get("no_ask") or 0) / 100.0
-                    results.append(
-                        ScanResult(
-                            market="kalshi",
-                            symbol=m.get("ticker", m.get("id", "")),
-                            yes_price=yes_price,
-                            no_price=no_price,
-                            current_price=yes_price,
-                            volume_24h=float(m.get("volume_24h", m.get("volume", 0)) or 0),
-                            resolution_time=close_raw,
-                            market_id=m.get("ticker", m.get("id")),
-                            scan_time=_now_iso(),
-                        )
-                    )
-                except Exception as exc:  # noqa: BLE001
-                    log.error("Kalshi market parse failed: %s", exc)
-                    continue
-    except Exception as exc:  # noqa: BLE001
-        log.error("scan_kalshi failed: %s", exc)
-    return results
+    """DISABLED — Kalshi API returns 401 Unauthorized; crypto only until auth is fixed."""
+    # Disabled 2026-06-22: every Kalshi call 401s. Returning [] so the worker runs
+    # crypto-only. Re-enable by restoring the body below once Kalshi auth works.
+    return []
+    # results = []
+    # try:
+    #     headers = {}
+    #     if config.KALSHI_API_KEY:
+    #         headers["Authorization"] = f"Bearer {config.KALSHI_API_KEY}"
+    #     async with httpx.AsyncClient(timeout=config.HTTP_TIMEOUT, headers=headers) as client:
+    #         res = await client.get(f"{KALSHI_BASE}/markets", params={"status": "open", "limit": 200})
+    #         markets = res.json().get("markets", [])
+    #         now = datetime.now(timezone.utc)
+    #         horizon = now + timedelta(hours=config.KALSHI_CLOSE_WITHIN_HOURS)
+    #         for m in markets:
+    #             try:
+    #                 close_raw = m.get("close_time")
+    #                 if not close_raw:
+    #                     continue
+    #                 close_dt = datetime.fromisoformat(close_raw.replace("Z", "+00:00"))
+    #                 if not (now <= close_dt <= horizon):
+    #                     continue
+    #                 yes_price = (m.get("yes_ask") or 0) / 100.0
+    #                 no_price = (m.get("no_ask") or 0) / 100.0
+    #                 results.append(
+    #                     ScanResult(
+    #                         market="kalshi",
+    #                         symbol=m.get("ticker", m.get("id", "")),
+    #                         yes_price=yes_price,
+    #                         no_price=no_price,
+    #                         current_price=yes_price,
+    #                         volume_24h=float(m.get("volume_24h", m.get("volume", 0)) or 0),
+    #                         resolution_time=close_raw,
+    #                         market_id=m.get("ticker", m.get("id")),
+    #                         scan_time=_now_iso(),
+    #                     )
+    #                 )
+    #             except Exception as exc:  # noqa: BLE001
+    #                 log.error("Kalshi market parse failed: %s", exc)
+    #                 continue
+    # except Exception as exc:  # noqa: BLE001
+    #     log.error("scan_kalshi failed: %s", exc)
+    # return results
 
 
 def _score_sentiment(text: str):

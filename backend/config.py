@@ -20,7 +20,7 @@ MAX_OPEN_TRADES = 20
 KALSHI_MAX_OPEN = 4
 
 # --- Confidence thresholds ------------------------------------------------
-MIN_CONFIDENCE = 0.70
+MIN_CONFIDENCE = 0.55
 CLAUDE_GRAY_ZONE_MIN = 0.70
 CLAUDE_GRAY_ZONE_MAX = 0.80
 CLAUDE_SKIP_THRESHOLD = 0.85
