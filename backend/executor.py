@@ -187,11 +187,18 @@ async def _place_kalshi_order(signal: Signal, size_usd: float, entry: float):
     log.info("Kalshi live order: %s %s $%.2f @ %.5f", signal.direction, signal.symbol, size_usd, entry)
 
 
-async def _current_price_for_trade(trade: dict):
-    """Return the current market price for an open trade, or None on failure."""
-    if trade.get("market") == "crypto":
+async def _current_price_for_trade(trade: dict, crypto_prices: dict = None):
+    """Return the current market price for an open trade, or None on failure.
+
+    For crypto, prefer a batched price from `crypto_prices` to avoid one Kraken
+    Ticker call per trade; fall back to a single fetch if not present.
+    """
+    market = trade.get("market")
+    if market == "crypto":
+        if crypto_prices is not None and trade.get("symbol") in crypto_prices:
+            return crypto_prices[trade["symbol"]]
         return await scanner.fetch_kraken_price(trade["symbol"])
-    if trade.get("market") == "kalshi":
+    if market == "kalshi":
         return await scanner.fetch_kalshi_price(trade["symbol"])
     return None
 
@@ -229,9 +236,17 @@ async def monitor_positions(db):
         log.error("monitor_positions could not load open trades: %s", exc)
         return
 
+    # Batch all crypto prices into ONE Kraken call per cycle — per-trade fetches
+    # exceeded Kraken's public rate limit once many trades were open, so prices
+    # came back None and SL/TP was never evaluated (trades never closed).
+    crypto_symbols = [
+        t["symbol"] for t in open_trades if t.get("market") == "crypto" and t.get("symbol")
+    ]
+    crypto_prices = await scanner.fetch_kraken_prices(crypto_symbols) if crypto_symbols else {}
+
     for trade in open_trades:
         try:
-            price = await _current_price_for_trade(trade)
+            price = await _current_price_for_trade(trade, crypto_prices)
             if price is None or price <= 0:
                 continue
 

@@ -261,6 +261,54 @@ async def fetch_kraken_price(symbol: str):
     return None
 
 
+_KRAKEN_PAIR_MAP = {}  # altname -> canonical Ticker key (cached; AssetPairs is static)
+
+
+async def _kraken_pair_map(client):
+    """Return (and cache) a Kraken altname -> canonical-pair-key map."""
+    global _KRAKEN_PAIR_MAP
+    if _KRAKEN_PAIR_MAP:
+        return _KRAKEN_PAIR_MAP
+    try:
+        res = await client.get(f"{KRAKEN_BASE}/AssetPairs")
+        data = res.json().get("result", {})
+        _KRAKEN_PAIR_MAP = {
+            info["altname"]: key for key, info in data.items() if info.get("altname")
+        }
+    except Exception as exc:  # noqa: BLE001
+        log.error("_kraken_pair_map failed: %s", exc)
+    return _KRAKEN_PAIR_MAP
+
+
+async def fetch_kraken_prices(symbols):
+    """Return {symbol: last_price} for many Kraken pairs in a single Ticker call."""
+    out = {}
+    syms = [s for s in dict.fromkeys(symbols) if s]  # dedupe, preserve order
+    if not syms:
+        return out
+    try:
+        async with httpx.AsyncClient(timeout=config.HTTP_TIMEOUT) as client:
+            res = await client.get(f"{KRAKEN_BASE}/Ticker", params={"pair": ",".join(syms)})
+            result = res.json().get("result", {})
+            pair_map = await _kraken_pair_map(client)
+            for sym in syms:
+                # Kraken keys results by canonical name; map our altname to it,
+                # falling back to a direct/contains match.
+                canonical = pair_map.get(sym, sym)
+                t = result.get(canonical) or result.get(sym)
+                if t is None:
+                    t = next((v for k, v in result.items() if sym in k), None)
+                if t is None:
+                    continue
+                try:
+                    out[sym] = float(t["c"][0])
+                except (KeyError, IndexError, TypeError, ValueError):
+                    continue
+    except Exception as exc:  # noqa: BLE001
+        log.error("fetch_kraken_prices failed: %s", exc)
+    return out
+
+
 async def fetch_kalshi_price(market_id: str):
     """Return the current yes price (0-1) for a Kalshi market, or None on failure."""
     try:
