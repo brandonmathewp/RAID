@@ -290,6 +290,25 @@ async def get_consecutive_losses():
         return 0
 
 
+async def get_last_loss_time():
+    """Return the close_time (UTC datetime) of the most recent losing trade, or None."""
+    try:
+        res = await (
+            supabase.table("trades")
+            .select("close_time")
+            .eq("status", "closed")
+            .lt("pnl", 0)
+            .order("close_time", desc=True)
+            .limit(1)
+            .execute()
+        )
+        if res.data and res.data[0].get("close_time"):
+            return datetime.fromisoformat(res.data[0]["close_time"].replace("Z", "+00:00"))
+    except Exception as exc:  # noqa: BLE001
+        log.error("get_last_loss_time failed: %s", exc)
+    return None
+
+
 async def get_daily_stats(date: str):
     """Return the daily_stats row for the given date as a dict, or {} if absent."""
     try:

@@ -44,11 +44,17 @@ async def check_gate(signal: Signal, db):
     except Exception as exc:  # noqa: BLE001
         log.error("gate daily-loss check failed: %s", exc)
 
-    # CHECK 3 — consecutive loss pause.
+    # CHECK 3 — consecutive loss pause (auto-resumes after CONSECUTIVE_LOSS_PAUSE_MINUTES).
     try:
         consec = await db.get_consecutive_losses()
         if consec >= config.CONSECUTIVE_LOSS_PAUSE:
-            return GateResult(False, f"consecutive_loss_pause_{consec}_losses")
+            last_loss = await db.get_last_loss_time()
+            if last_loss is not None:
+                elapsed_min = (datetime.now(timezone.utc) - last_loss).total_seconds() / 60
+                if elapsed_min < config.CONSECUTIVE_LOSS_PAUSE_MINUTES:
+                    return GateResult(False, f"consecutive_loss_pause_{consec}_losses")
+            # last_loss is None (can't determine when) — fail open to avoid a
+            # permanent block; the pause only holds within the 60-minute window.
     except Exception as exc:  # noqa: BLE001
         log.error("gate consecutive-loss check failed: %s", exc)
 
