@@ -57,6 +57,9 @@ async def check_gate(signal: Signal, db):
         open_trades = await db.get_open_trades()
         if len(open_trades) >= config.MAX_OPEN_TRADES:
             return GateResult(False, "max_open_trades")
+        for t in open_trades:
+            if t.get("symbol") == signal.symbol and t.get("direction") == signal.direction:
+                return GateResult(False, f"duplicate_{signal.symbol}_{signal.direction}")
     except Exception as exc:  # noqa: BLE001
         log.error("gate max-open check failed: %s", exc)
 

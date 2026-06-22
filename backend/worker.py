@@ -118,8 +118,10 @@ async def _handle_signal_pipeline(signal, database, summary):
             trade_result.trade_id,
             trade_result.size_usd,
         )
+        return bool(trade_result.trade_id)
     except Exception as exc:  # noqa: BLE001
         log.error("signal pipeline failed for %s: %s", getattr(signal, "symbol", "?"), exc)
+        return False
 
 
 async def _run_market(market: str, scan_fn, database):
@@ -139,8 +141,13 @@ async def _run_market(market: str, scan_fn, database):
 
         market_signals = await signals_mod.generate_signals(results)
         summary = await get_portfolio_summary(database)
+        entries_this_cycle = 0
         for sig in market_signals:
-            await _handle_signal_pipeline(sig, database, summary)
+            if entries_this_cycle >= config.MAX_ENTRIES_PER_CYCLE:
+                break
+            result = await _handle_signal_pipeline(sig, database, summary)
+            if result:
+                entries_this_cycle += 1
     except Exception as exc:  # noqa: BLE001
         log.error("_run_market(%s) failed: %s", market, exc)
 

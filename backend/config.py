@@ -16,7 +16,8 @@ RISK_REWARD_RATIO = 2.0
 
 # --- Risk limits ----------------------------------------------------------
 DAILY_LOSS_LIMIT_PCT = 0.10
-MAX_OPEN_TRADES = 20
+MAX_OPEN_TRADES = 8
+MAX_ENTRIES_PER_CYCLE = 2
 KALSHI_MAX_OPEN = 4
 
 # --- Confidence thresholds ------------------------------------------------
