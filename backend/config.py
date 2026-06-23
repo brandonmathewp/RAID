@@ -28,7 +28,7 @@ LIVE_DATE              = "2026-07-20"
 BOT_LIVE_DATE          = "2026-07-20"      # backward compat alias
 
 # --- Brain / cycle --------------------------------------------------------
-BRAIN_CYCLE_MINUTES    = 55
+BRAIN_CYCLE_MINUTES    = 30
 MAX_OPEN_TRADES        = 8
 MAX_ENTRIES_PER_CYCLE  = 5
 CLAUDE_DAILY_BUDGET_USD = 7.0
