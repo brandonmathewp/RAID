@@ -2,7 +2,8 @@
 """
 RAID v2 — Rapid AI Decision Engine — Single-file consolidated webapp.
 All backend modules merged into one file with embedded HTML dashboard.
-Requires: supabase, anthropic, python-dotenv, httpx, resend, tzdata
+Uses OpenRouter via OpenAI client instead of Anthropic.
+Requires: openai, supabase, python-dotenv, httpx, resend, tzdata
 """
 
 import asyncio
@@ -40,7 +41,7 @@ class Config:
     MAX_OPEN_TRADES = 20
     MAX_ENTRIES_PER_CYCLE = 5
     CLAUDE_DAILY_BUDGET_USD = 7.0
-    CLAUDE_MODEL = "claude-sonnet-4-6"
+    CLAUDE_MODEL = "claude-3.5-sonnet"  # OpenRouter model ID
     
     KELLY_FRACTION_DEFAULT = 0.25
     TARGET_VOLATILITY = 0.15
@@ -84,6 +85,7 @@ class Config:
     EOD_CLOSE_HOUR = 16
     EOD_CLOSE_TZ = "America/New_York"
     
+    # OpenRouter pricing (claude-3.5-sonnet via OpenRouter)
     CLAUDE_INPUT_COST_PER_TOKEN = 0.000003
     CLAUDE_OUTPUT_COST_PER_TOKEN = 0.000015
     CLAUDE_BUDGET_ALERT_AT = 6.0
@@ -163,12 +165,13 @@ class Config:
     CRYPTO_SCAN_INTERVAL = BRAIN_CYCLE_MINUTES * 60
     KALSHI_SCAN_INTERVAL = BRAIN_CYCLE_MINUTES * 60
     
+    # API keys
     KRAKEN_API_KEY = os.getenv("KRAKEN_API_KEY")
     KRAKEN_API_SECRET = os.getenv("KRAKEN_API_SECRET")
     KALSHI_API_KEY = os.getenv("KALSHI_API_KEY")
     ALPACA_API_KEY = os.getenv("ALPACA_API_KEY", "")
     ALPACA_API_SECRET = os.getenv("ALPACA_API_SECRET", "")
-    ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
+    OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")  # Changed from ANTHROPIC_API_KEY
     NEWS_API_KEY = os.getenv("NEWS_API_KEY")
     SUPABASE_URL = os.getenv("SUPABASE_URL")
     SUPABASE_KEY = os.getenv("SUPABASE_KEY")
@@ -179,7 +182,7 @@ class Config:
     _REQUIRED_KEYS = (
         "KRAKEN_API_KEY",
         "KRAKEN_API_SECRET",
-        "ANTHROPIC_API_KEY",
+        "OPENROUTER_API_KEY",  # Changed from ANTHROPIC_API_KEY
         "NEWS_API_KEY",
         "SUPABASE_URL",
         "SUPABASE_KEY",
@@ -263,6 +266,17 @@ class GateResult:
 class BrainResult:
     decision: str
     confidence: float
+
+# ────────────────────────────────────────────────────────────────────────────
+# OPENAI CLIENT (for OpenRouter)
+# ────────────────────────────────────────────────────────────────────────────
+
+from openai import AsyncOpenAI
+
+_openai_client = AsyncOpenAI(
+    api_key=config.OPENROUTER_API_KEY,
+    base_url="https://openrouter.ai/api/v1",
+)
 
 # ────────────────────────────────────────────────────────────────────────────
 # DATABASE (Async Supabase)
@@ -866,7 +880,7 @@ async def check_gate(signal: Signal) -> GateResult:
     return GateResult(True, "all_checks_passed")
 
 # ────────────────────────────────────────────────────────────────────────────
-# BRAIN (Trading decisions)
+# BRAIN (Trading decisions via OpenRouter/Claude)
 # ────────────────────────────────────────────────────────────────────────────
 
 _daily_spend = 0.0
@@ -877,6 +891,50 @@ def reset_daily_spend():
 
 def get_daily_spend():
     return _daily_spend
+
+async def call_openrouter(system_prompt: str, user_prompt: str) -> tuple[dict | None, float]:
+    """Call OpenRouter Claude API and return (parsed_json, cost_usd)."""
+    global _daily_spend
+    
+    try:
+        response = await _openai_client.chat.completions.create(
+            model="anthropic/claude-3.5-sonnet",  # OpenRouter model identifier
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            max_tokens=4096,
+        )
+        
+        raw = response.choices[0].message.content
+        cost = (
+            response.usage.prompt_tokens * config.CLAUDE_INPUT_COST_PER_TOKEN +
+            response.usage.completion_tokens * config.CLAUDE_OUTPUT_COST_PER_TOKEN
+        )
+        _daily_spend += cost
+        
+        log.info(
+            "BRAIN OPENROUTER CALL — in=%d out=%d cost=$%.4f total_today=$%.4f",
+            response.usage.prompt_tokens,
+            response.usage.completion_tokens,
+            cost,
+            _daily_spend,
+        )
+        
+        # Parse JSON response (basic extraction)
+        import re
+        match = re.search(r"\{.*\}", raw, re.DOTALL)
+        if match:
+            try:
+                parsed = json.loads(match.group())
+                return parsed, cost
+            except json.JSONDecodeError:
+                log.error("Failed to parse OpenRouter response as JSON")
+                return None, cost
+        return None, cost
+    except Exception as exc:
+        log.error("OpenRouter call failed: %s", exc)
+        return None, 0.0
 
 async def run_brain_cycle(scan_results, news_by_symbol):
     log.info("── Brain cycle start ──")
@@ -893,7 +951,7 @@ async def run_brain_cycle(scan_results, news_by_symbol):
     except Exception as exc:
         log.error("run_brain_cycle failed: %s", exc)
 
-# ──────────────────────────────────────────────────────────────────��─────────
+# ────────────────────────────────────────────────────────────────────────────
 # WORKER (Main event loop)
 # ────────────────────────────────────────────────────────────────────────────
 
@@ -1163,7 +1221,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 <body>
 <div class="header">
   <div class="logo">RAID</div>
-  <div>Dashboard (WebSocket updates coming soon)</div>
+  <div>Dashboard (OpenRouter/Claude via OpenAI)</div>
 </div>
 <div class="main">
   <div class="stats-grid">
@@ -1282,7 +1340,7 @@ async def main():
     except Exception as exc:
         raise RuntimeError(f"Supabase connection failed: {exc}") from exc
     log.info(
-        "RAID ONLINE — %s — %s MODE — Equity: $%.2f",
+        "RAID ONLINE — %s — %s MODE — Equity: $%.2f — Using OpenRouter Claude",
         datetime.now(timezone.utc).isoformat(),
         "PAPER" if config.PAPER_MODE else "LIVE",
         equity,
