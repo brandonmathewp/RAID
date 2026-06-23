@@ -473,7 +473,7 @@ async def _call_claude(
     try:
         resp = await _client.messages.create(
             model=config.CLAUDE_MODEL,
-            max_tokens=1500,
+            max_tokens=4096,
             system=_SYSTEM_PROMPT,
             messages=[{"role": "user", "content": user_message}],
         )
