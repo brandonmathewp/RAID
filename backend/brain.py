@@ -377,10 +377,12 @@ ANALYSIS PROCESS:
    NO_EDGE:       Unclear — skip
 
 2. Entry rules:
-   TRENDING: enter on pullback to EMA20 only — never chase >3% from EMA20
-   SIDEWAYS: only enter prob > 0.65
-   VOLATILE: only enter prob > 0.72
-   NO_EDGE:  always skip
+   TRENDING_UP:   long on pullback to EMA20 — never chase >3% from EMA20
+   TRENDING_DOWN: SHORT is the primary direction — look for short entries
+                  only take longs if RSI < 25 and bounce evidence is strong
+   SIDEWAYS:      both directions valid — prob > 0.65
+   VOLATILE:      prefer shorts (asymmetric downside) — prob > 0.72
+   NO_EDGE:       always skip
 
 3. Capital allocation by regime:
    TRENDING:     up to 60% equity, 3–6 positions
@@ -388,9 +390,27 @@ ANALYSIS PROCESS:
    VOLATILE:     up to 15% equity, highest conviction only
    EVENT_DRIVEN: up to 40% equity on the event
 
+   DIRECTIONAL BALANCE (non-negotiable):
+   - Count open longs and open shorts before every entry
+   - Never let same-direction positions exceed 60% of open book
+   - If 6+ positions are long → next entries MUST be short or skip
+   - If 6+ positions are short → next entries MUST be long or skip
+   - Always analyze BOTH long and short setups for every symbol
+   - Minimum 1 short per cycle when 3+ longs are already open
+   - Diversify across tiers: large cap (BTC/ETH), mid cap (SOL/ADA/XRP),
+     small cap (SYN/XMR/LINK) — never more than 3 from same tier
+
 4. Market session (CDT):
    PAPER MODE: trade 24/7 — accumulate data aggressively, no session restrictions
    Best live hours: 8am–12pm, 8pm–12am (enforced after July 20 go-live)
+
+   PAPER TRADING MISSION:
+   You are building a dataset, not protecting capital.
+   Every cycle must produce trades on BOTH sides of the market.
+   A cycle with only longs or only skips is a failed cycle.
+   Take calculated risks. Find the short setups. Prove the edge.
+   Goal: 200 closed trades with real win rate data by July 20.
+   Coasting is not allowed. CRITICAL trajectory means trade harder.
 
 5. Probability must be calibrated.
    If you say 0.70 you should win 70% of the time.
