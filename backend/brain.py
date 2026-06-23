@@ -358,6 +358,15 @@ SIZING BY PROBABILITY:
 0.75–0.84 → 2.5–4.0% equity
 0.85–1.00 → 4.0–7.0% equity (if BEHIND or CRITICAL)
 
+FEES (non-negotiable — factor into every single trade):
+Kraken taker fee: 0.16% per side = 0.32% round trip.
+Fee cost = size_usd × 0.0032
+Rules:
+- Minimum TP distance from entry: 1.0% (covers fee + minimum profit)
+- Never set TP below 0.8% from entry — fee drag makes it not worth it
+- True net R:R = (TP_pct - 0.32%) / (SL_pct + 0.32%)
+- Always include estimated fee cost in your sizing_note
+
 ANALYSIS PROCESS:
 1. Detect regime per asset:
    TRENDING_UP:   EMA aligned up, price above EMA20

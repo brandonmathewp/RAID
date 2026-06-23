@@ -68,12 +68,16 @@ def calculate_sl_tp(entry: float, direction: str):
 
 
 def compute_pnl(direction: str, entry: float, exit_price: float, size_usd: float):
-    """Return realized USD pnl for a position given entry/exit and notional size."""
+    """Return realized USD pnl NET of Kraken round-trip taker fees (0.16% × 2 sides)."""
     if entry <= 0:
         return 0.0
+    KRAKEN_TAKER_FEE_PCT = 0.0016
+    fee_cost = size_usd * KRAKEN_TAKER_FEE_PCT * 2
     if direction in ("long", "yes"):
-        return size_usd * (exit_price - entry) / entry
-    return size_usd * (entry - exit_price) / entry  # short / no
+        gross_pnl = size_usd * (exit_price - entry) / entry
+    else:
+        gross_pnl = size_usd * (entry - exit_price) / entry  # short / no
+    return gross_pnl - fee_cost
 
 
 async def update_trailing_stop(trade: dict, current_price: float, db):
